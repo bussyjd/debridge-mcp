@@ -131,19 +131,6 @@ pnpm start
 }
 ```
 
-## Supported Chains
-
-- Ethereum (1)
-- Optimism (10)
-- BNB Chain (56)
-- Polygon (137)
-- Base (8453)
-- Arbitrum One (42161)
-- Avalanche (43114)
-- Linea (59144)
-- Solana (7565164)
-- And more...
-
 ## License
 
 MIT
