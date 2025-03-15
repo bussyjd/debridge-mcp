@@ -242,6 +242,7 @@ export const executeBridgeTransactionSchema = z.object({
       .optional()
       .describe("Value must be a non-negative integer in wei"),
   }).describe("Transaction data from createBridgeOrder"),
+  chainId: z.string().optional(),
 });
 
 /**
@@ -251,6 +252,7 @@ export interface ChainInfo {
   chainId: string;
   originalChainId: string;
   chainName: string;
+  chainType?: 'evm' | 'solana';
   nativeToken?: {
     symbol: string;
     name: string;

@@ -145,7 +145,6 @@ const executeBridgeTransactionTool: Tool = {
     properties: {
       txData: {
         type: "object",
-        description: "Transaction data from create_bridge_order",
         properties: {
           to: {
             type: "string",
@@ -163,8 +162,16 @@ const executeBridgeTransactionTool: Tool = {
             type: "number",
             description: "Gas limit for the transaction",
           },
+          chainId: {
+            type: "number",
+            description: "Chain ID for the transaction",
+          },
         },
         required: ["to", "data"],
+      },
+      chainId: {
+        type: "string",
+        description: "Chain ID to use for the transaction (overrides txData.chainId if both are provided)",
       },
     },
     required: ["txData"],

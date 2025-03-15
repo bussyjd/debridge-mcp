@@ -3,7 +3,7 @@
  */
 
 import { Client, PublicActions, WalletActions } from "viem";
-import { DEBRIDGE_API_BASE_URL, DEFAULT_REFERRAL_CODE } from "../lib/constants.js";
+import { DEBRIDGE_API_BASE_URL, DEFAULT_REFERRAL_CODE, CHAIN_IDS } from "../lib/constants.js";
 import {
   SearchTokenParams,
   GetBridgeQuoteParams,
@@ -235,26 +235,94 @@ export async function executeBridgeTransactionHandler(
       throw new Error("SEED_PHRASE environment variable is required");
     }
     
-    // Create the appropriate wallet provider based on chain type
-    // For simplicity, we're using chainId 1 (Ethereum) for EVM transactions
-    // In a production environment, you would determine the correct chainId
-    const walletProvider = await createWalletProvider(
-      seedPhrase,
-      chainType === 'solana' ? 7565164 : 1
-    );
+    // For Solana transactions, we use the Solana chain ID
+    // For EVM transactions, we need to determine the chain ID from the transaction data
+    // or from the 'to' address network
+    let chainId: string;
     
-    // Send the transaction using the wallet provider
-    const hash = await walletProvider.sendTransaction({
+    if (chainType === 'solana') {
+      // Use Solana chain ID
+      chainId = String(CHAIN_IDS.SOLANA);
+      console.log(`Detected Solana transaction, using chain ID: ${chainId}`);
+    } else {
+      // For EVM, try to determine the chain from params or use a default
+      if (params.chainId) {
+        chainId = params.chainId;
+      } else if ('chainId' in txData && txData.chainId) {
+        chainId = String(txData.chainId);
+      } else {
+        // If no chain ID is provided, try to determine it from supported chains
+        // This is a simplified approach - in production, you would use more sophisticated chain detection
+        console.log("No chain ID provided, attempting to determine from supported chains...");
+        try {
+          const supportedChains = await getSupportedChainsHandler();
+          // This is a simplified approach to find a matching chain
+          // In production, you would use more sophisticated chain detection
+          const matchingChain = supportedChains.chains.find(chain => 
+            chain.chainType === 'evm' && 
+            chain.nativeToken && 
+            chain.nativeToken.symbol
+          );
+          
+          if (matchingChain) {
+            chainId = matchingChain.chainId;
+            console.log(`Determined chain ID from supported chains: ${chainId}`);
+          } else {
+            // Default to Ethereum if we can't determine the chain
+            chainId = String(CHAIN_IDS.ETHEREUM);
+            console.log(`Could not determine chain ID, defaulting to Ethereum: ${chainId}`);
+          }
+        } catch (error) {
+          // If we can't get supported chains, default to Ethereum
+          chainId = String(CHAIN_IDS.ETHEREUM);
+          console.log(`Error determining chain ID, defaulting to Ethereum: ${chainId}`);
+        }
+      }
+    }
+    
+    // Create the appropriate wallet provider based on chain type and ID
+    console.log(`Creating wallet provider for chain ID: ${chainId}`);
+    const walletProvider = await createWalletProvider(seedPhrase, chainId);
+    
+    // Prepare transaction parameters based on chain type
+    const txParams: any = {
       to: txData.to,
       data: txData.data,
-      value: txData.value,
+    };
+    
+    // Add value for EVM transactions if provided
+    if (chainType === 'evm' && txData.value) {
+      txParams.value = txData.value;
+    }
+    
+    // Add gas limit for EVM transactions if provided
+    if (chainType === 'evm' && 'gasLimit' in txData && txData.gasLimit) {
+      txParams.gas = txData.gasLimit;
+    }
+    
+    // Send the transaction using the wallet provider
+    console.log(`Sending transaction with params:`, {
+      to: txParams.to,
+      dataLength: txParams.data.length,
+      value: txParams.value,
+      gas: txParams.gas
     });
     
+    const hash = await walletProvider.sendTransaction(txParams);
+    
     console.log(`Transaction sent successfully: ${hash}`);
-    return { hash };
+    return { 
+      hash,
+      chainId,
+      chainType
+    };
   } catch (error) {
     console.error("Error executing bridge transaction:", error);
-    throw error;
+    // Provide more detailed error information
+    if (error instanceof Error) {
+      throw new Error(`Failed to execute bridge transaction: ${error.message}`);
+    }
+    throw new Error(`Failed to execute bridge transaction: ${String(error)}`);
   }
 }
 

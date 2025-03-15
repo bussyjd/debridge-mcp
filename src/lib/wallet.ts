@@ -5,7 +5,7 @@ import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
 import { getSupportedChainsHandler } from '../tools/handlers.js';
 import { ChainInfo } from '../tools/schemas.js';
-import { SUPPORTED_CHAINS } from './constants.js';
+import { SUPPORTED_CHAINS, CHAIN_IDS } from './constants.js';
 
 // Cache for supported chains
 let cachedChains: ChainInfo[] | null = null;
@@ -26,16 +26,17 @@ export async function getSupportedChains(): Promise<ChainInfo[]> {
   } catch (error) {
     console.error("Error fetching supported chains, falling back to static list:", error);
     // Fallback to static list if API call fails
-    const fallbackChains = Object.values(SUPPORTED_CHAINS).map(chain => ({
+    const fallbackChains = SUPPORTED_CHAINS.map(chain => ({
       chainId: String(chain.chainId),
       originalChainId: String(chain.chainId),
-      chainName: chain.name || chain.chainName,
+      chainName: chain.chainName,
+      chainType: chain.chainId === CHAIN_IDS.SOLANA ? 'solana' as const : 'evm' as const,
       nativeToken: {
         symbol: chain.nativeCurrency.symbol,
         name: chain.nativeCurrency.name,
         decimals: chain.nativeCurrency.decimals
       },
-      rpcUrl: chain.rpcUrls?.default?.http[0] || ''
+      rpcUrl: chain.rpcUrl
     }));
     return fallbackChains;
   }
@@ -99,7 +100,7 @@ export async function createWalletProvider(seedPhrase: string, chainId: string):
   // For Solana chains
   if (chainId === '7565164') {
     const seed = await bip39.mnemonicToSeed(seedPhrase);
-    const derivedSeed = derivePath("m/44'/501'/0'/0'", seed.slice(0, 32)).key;
+    const derivedSeed = derivePath("m/44'/501'/0'/0'", seed.toString('hex').slice(0, 64)).key;
     const keypair = Keypair.fromSeed(derivedSeed);
     
     return {
@@ -116,7 +117,7 @@ export async function createWalletProvider(seedPhrase: string, chainId: string):
         
         // Deserialize the transaction
         const serializedTx = Buffer.from(params.data.slice(2), 'hex'); // Remove '0x' prefix
-        const transaction = Transaction.from(serializedTx);
+        const transaction = Transaction.from(new Uint8Array(serializedTx));
         
         // Sign the transaction
         transaction.partialSign(keypair);
