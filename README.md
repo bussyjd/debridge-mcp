@@ -4,6 +4,8 @@ A minimal Model Context Protocol (MCP) server for interacting with the DeBridge 
 
 ## Features
 
+- **Dynamic Chain List**: Automatically fetches supported chains from the DLN API
+- **Multi-Chain Support**: Handles both EVM and Solana transactions seamlessly
 - **Token Search**: Search for tokens on any supported blockchain
 - **Bridge Quotes**: Get quotes for cross-chain token transfers
 - **Order Creation**: Create bridge orders for transferring tokens between chains
@@ -13,10 +15,11 @@ A minimal Model Context Protocol (MCP) server for interacting with the DeBridge 
 
 The DeBridge MCP server provides the following tools:
 
-1. `search_token`: Search for tokens on a specific chain
-2. `get_bridge_quote`: Get a quote for bridging tokens between chains
-3. `create_bridge_order`: Create a bridge order for cross-chain token transfers
-4. `execute_bridge_transaction`: Execute a bridge transaction
+1. `get_supported_chains`: Get a list of all supported chains with their details
+2. `search_token`: Search for tokens on a specific chain
+3. `get_bridge_quote`: Get a quote for bridging tokens between chains
+4. `create_bridge_order`: Create a bridge order for cross-chain token transfers
+5. `execute_bridge_transaction`: Execute a bridge transaction on any supported chain
 
 ## Setup
 
@@ -59,6 +62,15 @@ pnpm start
 ```
 
 ## Usage Examples
+
+### Get Supported Chains
+
+```json
+{
+  "name": "get_supported_chains",
+  "arguments": {}
+}
+```
 
 ### Search for Tokens
 
