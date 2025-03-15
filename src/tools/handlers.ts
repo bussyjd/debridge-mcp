@@ -1,0 +1,296 @@
+/**
+ * Handler implementations for DeBridge MCP tools
+ */
+
+import { Client, PublicActions, WalletActions } from "viem";
+import { DEBRIDGE_API_BASE_URL, DEFAULT_REFERRAL_CODE } from "../lib/constants.js";
+import {
+  SearchTokenParams,
+  GetBridgeQuoteParams,
+  CreateBridgeOrderParams,
+  ExecuteBridgeTransactionParams,
+} from "./schemas.js";
+
+/**
+ * Interface for token information
+ */
+interface TokenInfo {
+  name: string;
+  symbol: string;
+  address: string;
+  decimals: number;
+}
+
+/**
+ * Type for wallet client with required actions
+ */
+type WalletClient = Client & PublicActions & WalletActions;
+
+/**
+ * Search for tokens on a specific chain
+ * @param walletClient Viem wallet client
+ * @param params Search parameters
+ * @returns Matching tokens with their details
+ */
+export async function searchTokenHandler(
+  walletClient: WalletClient,
+  params: SearchTokenParams
+) {
+  try {
+    const url = `${DEBRIDGE_API_BASE_URL}/token-list?chainId=${params.chainId}`;
+    console.log("Fetching token information from:", url);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+    }
+
+    const responseData = await response.json();
+    const data = responseData.tokens;
+
+    // If no search term, return all tokens
+    if (!params.search) {
+      return { tokens: data };
+    }
+
+    // Filter tokens by search term
+    const searchTerm = params.search.toLowerCase();
+    const tokens = Object.entries(data as Record<string, TokenInfo>)
+      .filter(
+        ([, token]: [string, TokenInfo]) =>
+          token.symbol && token.symbol.toLowerCase().includes(searchTerm)
+      )
+      .reduce(
+        (acc, [address, token]: [string, TokenInfo]) => {
+          acc[address] = {
+            name: token.name,
+            symbol: token.symbol,
+            address,
+            decimals: token.decimals,
+          };
+          return acc;
+        },
+        {} as Record<string, TokenInfo>
+      );
+
+    // Log matched tokens
+    const matchedTokens = Object.values(tokens);
+    if (matchedTokens.length > 0) {
+      console.log(
+        `Found ${matchedTokens.length} token(s) matching "${searchTerm}":`,
+        JSON.stringify(matchedTokens, null, 2)
+      );
+    }
+
+    return { tokens };
+  } catch (error) {
+    console.error("Error searching for tokens:", error);
+    throw error;
+  }
+}
+
+/**
+ * Get a quote for bridging tokens between chains
+ * @param walletClient Viem wallet client
+ * @param params Bridge quote parameters
+ * @returns Quote information including estimated amounts and fees
+ */
+export async function getBridgeQuoteHandler(
+  walletClient: WalletClient,
+  params: GetBridgeQuoteParams
+) {
+  try {
+    const isSameChain = params.srcChainId === params.dstChainId;
+    const userAddress = await walletClient.getAddresses().then((addresses: `0x${string}`[]) => addresses[0]);
+
+    const url = isSameChain
+      ? `${DEBRIDGE_API_BASE_URL}/chain/transaction?${new URLSearchParams({
+          chainId: params.srcChainId,
+          tokenIn: params.srcChainTokenIn,
+          tokenInAmount: params.srcChainTokenInAmount,
+          tokenOut: params.dstChainTokenOut,
+          tokenOutRecipient: userAddress,
+          slippage: params.slippage?.toString() || "auto",
+          affiliateFeePercent: "0",
+        })}`
+      : `${DEBRIDGE_API_BASE_URL}/dln/order/create-tx?${new URLSearchParams({
+          srcChainId: params.srcChainId,
+          srcChainTokenIn: params.srcChainTokenIn,
+          srcChainTokenInAmount: params.srcChainTokenInAmount,
+          dstChainId: params.dstChainId,
+          dstChainTokenOut: params.dstChainTokenOut,
+          dstChainTokenOutAmount: "auto",
+          prependOperatingExpenses: "true",
+          additionalTakerRewardBps: "0",
+        })}`;
+
+    console.log("Making request to:", url);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+    }
+
+    const data = await response.json();
+    console.log("Bridge quote response:", JSON.stringify(data, null, 2));
+    
+    if (data.error) {
+      throw new Error(data.error);
+    }
+    
+    return data;
+  } catch (error) {
+    console.error("Error getting bridge quote:", error);
+    throw new Error(`Failed to get bridge quote: ${error}`);
+  }
+}
+
+/**
+ * Create a bridge order for cross-chain token transfers
+ * @param walletClient Viem wallet client
+ * @param params Bridge order parameters
+ * @returns Order details including transaction data
+ */
+export async function createBridgeOrderHandler(
+  walletClient: WalletClient,
+  params: CreateBridgeOrderParams
+) {
+  try {
+    const urlParams = new URLSearchParams();
+    
+    // Required parameters
+    urlParams.append("srcChainId", params.srcChainId);
+    urlParams.append("srcChainTokenIn", params.srcChainTokenIn);
+    urlParams.append("srcChainTokenInAmount", params.srcChainTokenInAmount);
+    urlParams.append("dstChainId", params.dstChainId);
+    urlParams.append("dstChainTokenOut", params.dstChainTokenOut);
+    urlParams.append("dstChainTokenOutRecipient", params.dstChainTokenOutRecipient);
+    urlParams.append("senderAddress", params.senderAddress);
+    
+    // Source chain authority addresses
+    if (params.srcChainOrderAuthorityAddress) {
+      urlParams.append("srcChainOrderAuthorityAddress", params.srcChainOrderAuthorityAddress);
+    } else {
+      urlParams.append("srcChainOrderAuthorityAddress", params.senderAddress);
+    }
+    
+    // Source chain refund address
+    if (params.srcChainRefundAddress) {
+      urlParams.append("srcChainRefundAddress", params.srcChainRefundAddress);
+    } else {
+      urlParams.append("srcChainRefundAddress", params.senderAddress);
+    }
+    
+    // Destination chain authority address
+    if (params.dstChainOrderAuthorityAddress) {
+      urlParams.append("dstChainOrderAuthorityAddress", params.dstChainOrderAuthorityAddress);
+    } else {
+      urlParams.append("dstChainOrderAuthorityAddress", params.dstChainTokenOutRecipient);
+    }
+    
+    // Optional parameters
+    urlParams.append("referralCode", params.referralCode || DEFAULT_REFERRAL_CODE);
+    
+    // Operating expenses
+    const prependOperatingExpenses = params.prependOperatingExpenses !== undefined 
+      ? params.prependOperatingExpenses.toString() 
+      : "true";
+    urlParams.append("prependOperatingExpenses", prependOperatingExpenses);
+    
+    // Slippage
+    if (params.slippage) {
+      urlParams.append("slippage", params.slippage);
+    }
+    
+    // App identifier
+    if (params.deBridgeApp) {
+      urlParams.append("deBridgeApp", params.deBridgeApp);
+    }
+
+    const url = `${DEBRIDGE_API_BASE_URL}/dln/order/create-tx?${urlParams}`;
+    console.log("Making create bridge order request to:", url);
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
+    }
+
+    const data = await response.json();
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    // Format the txData to ensure it's properly stringified
+    if (data.tx?.data) {
+      data.tx.data = data.tx.data.toString();
+    }
+
+    return data;
+  } catch (error) {
+    console.error("Error creating bridge order:", error);
+    throw new Error(`Failed to create bridge order: ${error}`);
+  }
+}
+
+/**
+ * Execute a bridge transaction
+ * @param walletClient Viem wallet client
+ * @param params Bridge transaction parameters
+ * @returns Transaction hash and confirmation status
+ */
+export async function executeBridgeTransactionHandler(
+  walletClient: WalletClient,
+  params: ExecuteBridgeTransactionParams
+) {
+  try {
+    const { txData } = params;
+
+    // Validate transaction data
+    if (!txData.to || !txData.data) {
+      throw new Error("Invalid transaction data: missing 'to' or 'data' field");
+    }
+
+    // Validate data format
+    if (!txData.data.startsWith("0x")) {
+      throw new Error("Invalid transaction data: 'data' field must start with '0x'");
+    }
+
+    // Get the first account from the wallet client
+    const account = await walletClient.getAddresses().then((addresses: `0x${string}`[]) => {
+      if (!addresses || addresses.length === 0) {
+        throw new Error("No wallet address available");
+      }
+      return addresses[0];
+    });
+
+    // Enhanced logging for debugging
+    console.log("Executing bridge transaction with data:", {
+      to: txData.to,
+      value: txData.value ? `${txData.value} (${BigInt(txData.value)})` : "undefined",
+      data: {
+        full: txData.data,
+        functionSelector: txData.data.slice(0, 10),
+        parameters: txData.data.slice(10),
+      },
+    });
+
+    // Send transaction using raw transaction data
+    console.log("Sending transaction...");
+    const hash = await walletClient.sendTransaction({
+      to: txData.to as `0x${string}`,
+      data: txData.data as `0x${string}`,
+      value: txData.value ? BigInt(txData.value) : undefined,
+      account,
+      chain: null,
+    });
+
+    console.log("Transaction sent! Hash:", hash);
+    return { hash };
+  } catch (error) {
+    console.error("Bridge transaction execution failed:", error);
+    throw new Error(`Failed to execute bridge transaction: ${error}`);
+  }
+}
