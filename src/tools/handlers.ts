@@ -10,6 +10,7 @@ import {
   CreateBridgeOrderParams,
   ExecuteBridgeTransactionParams,
 } from "./schemas.js";
+import { createWalletProvider, getChainTypeFromAddress } from '../lib/wallet.js';
 
 /**
  * Interface for token information
@@ -190,8 +191,11 @@ export async function createBridgeOrderHandler(
       urlParams.append("dstChainOrderAuthorityAddress", params.dstChainTokenOutRecipient);
     }
     
-    // Optional parameters
-    urlParams.append("referralCode", params.referralCode || DEFAULT_REFERRAL_CODE);
+    // Add referral code if not provided
+    if (!params.referralCode) {
+      params.referralCode = DEFAULT_REFERRAL_CODE.toString();
+    }
+    urlParams.append("referralCode", params.referralCode);
     
     // Operating expenses
     const prependOperatingExpenses = params.prependOperatingExpenses !== undefined 
@@ -242,55 +246,48 @@ export async function createBridgeOrderHandler(
  * @returns Transaction hash and confirmation status
  */
 export async function executeBridgeTransactionHandler(
-  walletClient: WalletClient,
+  walletClient: any,
   params: ExecuteBridgeTransactionParams
 ) {
+  const { txData } = params;
+
+  // Validate transaction data
+  if (!txData.to || !txData.data) {
+    throw new Error("Invalid transaction data: missing 'to' or 'data' field");
+  }
+
+  console.log(`Executing bridge transaction to ${txData.to}`);
+  console.log(`Transaction data: ${txData.data.slice(0, 50)}...`);
+  
   try {
-    const { txData } = params;
-
-    // Validate transaction data
-    if (!txData.to || !txData.data) {
-      throw new Error("Invalid transaction data: missing 'to' or 'data' field");
+    // Determine chain type based on the 'to' address
+    const chainType = getChainTypeFromAddress(txData.to);
+    
+    // Get the seed phrase from environment variables
+    const seedPhrase = process.env.SEED_PHRASE;
+    if (!seedPhrase) {
+      throw new Error("SEED_PHRASE environment variable is required");
     }
-
-    // Validate data format
-    if (!txData.data.startsWith("0x")) {
-      throw new Error("Invalid transaction data: 'data' field must start with '0x'");
-    }
-
-    // Get the first account from the wallet client
-    const account = await walletClient.getAddresses().then((addresses: `0x${string}`[]) => {
-      if (!addresses || addresses.length === 0) {
-        throw new Error("No wallet address available");
-      }
-      return addresses[0];
-    });
-
-    // Enhanced logging for debugging
-    console.log("Executing bridge transaction with data:", {
+    
+    // Create the appropriate wallet provider based on chain type
+    // For simplicity, we're using chainId 1 (Ethereum) for EVM transactions
+    // In a production environment, you would determine the correct chainId
+    const walletProvider = await createWalletProvider(
+      seedPhrase,
+      chainType === 'solana' ? 7565164 : 1
+    );
+    
+    // Send the transaction using the wallet provider
+    const hash = await walletProvider.sendTransaction({
       to: txData.to,
-      value: txData.value ? `${txData.value} (${BigInt(txData.value)})` : "undefined",
-      data: {
-        full: txData.data,
-        functionSelector: txData.data.slice(0, 10),
-        parameters: txData.data.slice(10),
-      },
+      data: txData.data,
+      value: txData.value,
     });
-
-    // Send transaction using raw transaction data
-    console.log("Sending transaction...");
-    const hash = await walletClient.sendTransaction({
-      to: txData.to as `0x${string}`,
-      data: txData.data as `0x${string}`,
-      value: txData.value ? BigInt(txData.value) : undefined,
-      account,
-      chain: null,
-    });
-
-    console.log("Transaction sent! Hash:", hash);
+    
+    console.log(`Transaction sent successfully: ${hash}`);
     return { hash };
   } catch (error) {
-    console.error("Bridge transaction execution failed:", error);
-    throw new Error(`Failed to execute bridge transaction: ${error}`);
+    console.error("Error executing bridge transaction:", error);
+    throw error;
   }
 }
