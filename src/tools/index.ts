@@ -8,6 +8,7 @@ import {
   getBridgeQuoteHandler,
   createBridgeOrderHandler,
   executeBridgeTransactionHandler,
+  getSupportedChainsHandler,
 } from "./handlers.js";
 
 /**
@@ -171,6 +172,19 @@ const executeBridgeTransactionTool: Tool = {
 };
 
 /**
+ * Tool for getting supported chains
+ */
+const getSupportedChainsTool: Tool = {
+  name: "get_supported_chains",
+  description: "Get a list of all supported chains with their details including chain IDs, names, and native tokens.",
+  inputSchema: {
+    type: "object",
+    properties: {},
+    required: [],
+  },
+};
+
+/**
  * Export all DeBridge MCP tools
  */
 export const debridgeMcpTools: Tool[] = [
@@ -178,6 +192,7 @@ export const debridgeMcpTools: Tool[] = [
   getBridgeQuoteTool,
   createBridgeOrderTool,
   executeBridgeTransactionTool,
+  getSupportedChainsTool,
 ];
 
 /**
@@ -188,4 +203,5 @@ export const toolToHandler: Record<string, Function> = {
   get_bridge_quote: getBridgeQuoteHandler,
   create_bridge_order: createBridgeOrderHandler,
   execute_bridge_transaction: executeBridgeTransactionHandler,
+  get_supported_chains: getSupportedChainsHandler,
 };

@@ -1,10 +1,78 @@
-import { createWalletClient, http, createPublicClient, defineChain } from 'viem';
+import { createWalletClient, http, createPublicClient } from 'viem';
 import { mnemonicToAccount } from 'viem/accounts';
-import { Connection, Keypair, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } from '@solana/web3.js';
-// We don't need TOKEN_PROGRAM_ID for the basic implementation
+import { Connection, Keypair, PublicKey, Transaction } from '@solana/web3.js';
 import * as bip39 from 'bip39';
 import { derivePath } from 'ed25519-hd-key';
+import { getSupportedChainsHandler } from '../tools/handlers.js';
+import { ChainInfo } from '../tools/schemas.js';
 import { SUPPORTED_CHAINS } from './constants.js';
+
+// Cache for supported chains
+let cachedChains: ChainInfo[] | null = null;
+
+/**
+ * Fetches the supported chains from the API or returns the cached result
+ * @returns A promise that resolves to the list of supported chains
+ */
+export async function getSupportedChains(): Promise<ChainInfo[]> {
+  if (cachedChains) {
+    return cachedChains;
+  }
+
+  try {
+    const response = await getSupportedChainsHandler();
+    cachedChains = response.chains;
+    return response.chains;
+  } catch (error) {
+    console.error("Error fetching supported chains, falling back to static list:", error);
+    // Fallback to static list if API call fails
+    const fallbackChains = Object.values(SUPPORTED_CHAINS).map(chain => ({
+      chainId: String(chain.chainId),
+      originalChainId: String(chain.chainId),
+      chainName: chain.name || chain.chainName,
+      nativeToken: {
+        symbol: chain.nativeCurrency.symbol,
+        name: chain.nativeCurrency.name,
+        decimals: chain.nativeCurrency.decimals
+      },
+      rpcUrl: chain.rpcUrls?.default?.http[0] || ''
+    }));
+    return fallbackChains;
+  }
+}
+
+/**
+ * Gets chain configuration for a specific chain ID
+ * @param chainId The chain ID to get configuration for
+ * @returns A promise that resolves to the chain configuration
+ */
+export async function getChainConfig(chainId: string): Promise<ChainInfo | undefined> {
+  const chains = await getSupportedChains();
+  return chains.find(chain => chain.chainId === chainId);
+}
+
+/**
+ * Determines if an address is a Solana address
+ * @param address The address to check
+ * @returns True if the address is a Solana address, false otherwise
+ */
+export function isSolanaAddress(address: string): boolean {
+  try {
+    new PublicKey(address);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Determines the chain type from an address
+ * @param address The address to check
+ * @returns 'solana' if the address is a Solana address, 'evm' otherwise
+ */
+export function getChainTypeFromAddress(address: string): 'solana' | 'evm' {
+  return isSolanaAddress(address) ? 'solana' : 'evm';
+}
 
 // Type definitions
 export type ChainType = 'evm' | 'solana';
@@ -15,137 +83,111 @@ export interface WalletProvider {
   isSolana: boolean;
 }
 
-// Determine if a chain is Solana based on chainId
-export function isSolanaChain(chainId: string | number): boolean {
-  // Solana mainnet chainId in deBridge API is 7565164
-  return chainId === 7565164 || chainId === '7565164';
-}
-
-// Determine chain type from address format
-export function getChainTypeFromAddress(address: string): ChainType {
-  // Solana addresses are 32-44 characters long and base58 encoded
-  // They don't start with '0x'
-  if (!address.startsWith('0x') && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
-    return 'solana';
-  }
-  
-  // EVM addresses are 42 characters long (including '0x') and hex encoded
-  return 'evm';
-}
-
-// Create a wallet provider based on chain type
-export async function createWalletProvider(
-  seedPhrase: string,
-  chainId: string | number
-): Promise<WalletProvider> {
-  if (isSolanaChain(chainId)) {
-    return createSolanaWalletProvider(seedPhrase);
-  } else {
-    return createEvmWalletProvider(seedPhrase, chainId);
-  }
-}
-
-// Create an EVM wallet provider
-function createEvmWalletProvider(
-  seedPhrase: string,
-  chainId: string | number
-): WalletProvider {
-  const account = mnemonicToAccount(seedPhrase);
-  
-  // Find the chain configuration
-  const chainConfig = SUPPORTED_CHAINS.find((chain: any) => 
-    chain.chainId === Number(chainId) || chain.chainId === chainId
-  );
+/**
+ * Creates a wallet provider for a specific chain
+ * @param seedPhrase The seed phrase to derive the wallet from
+ * @param chainId The chain ID to create the wallet for
+ * @returns A promise that resolves to the wallet provider
+ */
+export async function createWalletProvider(seedPhrase: string, chainId: string): Promise<WalletProvider> {
+  const chainConfig = await getChainConfig(chainId);
   
   if (!chainConfig) {
-    throw new Error(`Unsupported chain ID: ${chainId}`);
+    throw new Error(`Chain ID ${chainId} not supported`);
   }
   
-  // Create a custom chain definition for viem
-  const chain = defineChain({
-    id: Number(chainConfig.chainId),
-    name: chainConfig.chainName || 'Unknown Chain',
-    nativeCurrency: {
-      name: chainConfig.nativeCurrency?.name || 'Ether',
-      symbol: chainConfig.nativeCurrency?.symbol || 'ETH',
-      decimals: chainConfig.nativeCurrency?.decimals || 18
-    },
-    rpcUrls: {
-      default: {
-        http: [chainConfig.rpcUrl || '']
-      }
-    }
-  });
+  // For Solana chains
+  if (chainId === '7565164') {
+    const seed = await bip39.mnemonicToSeed(seedPhrase);
+    const derivedSeed = derivePath("m/44'/501'/0'/0'", seed.slice(0, 32)).key;
+    const keypair = Keypair.fromSeed(derivedSeed);
+    
+    return {
+      getAddress: async () => keypair.publicKey.toBase58(),
+      sendTransaction: async (params: any) => {
+        // Handle Solana transaction
+        // This is a simplified implementation - in a real-world scenario,
+        // you would need to deserialize and handle the transaction based on the specific requirements
+        
+        // For Solana, we expect the transaction to be serialized in the 'data' field
+        if (!params.data) {
+          throw new Error('Missing transaction data for Solana transaction');
+        }
+        
+        // Deserialize the transaction
+        const serializedTx = Buffer.from(params.data.slice(2), 'hex'); // Remove '0x' prefix
+        const transaction = Transaction.from(serializedTx);
+        
+        // Sign the transaction
+        transaction.partialSign(keypair);
+        
+        // Send the transaction
+        const connection = new Connection(chainConfig.rpcUrl || 'https://api.mainnet-beta.solana.com', 'confirmed');
+        const signature = await connection.sendRawTransaction(transaction.serialize());
+        
+        // Confirm the transaction
+        await connection.confirmTransaction({
+          signature,
+          lastValidBlockHeight: 0,
+          blockhash: transaction.recentBlockhash || '',
+        });
+        
+        return signature;
+      },
+      isSolana: true
+    };
+  }
+  
+  // For EVM chains
+  const account = mnemonicToAccount(seedPhrase);
   
   const walletClient = createWalletClient({
     account,
-    chain,
-    transport: http(chainConfig.rpcUrl || '')
+    chain: {
+      id: Number(chainConfig.originalChainId),
+      name: chainConfig.chainName,
+      nativeCurrency: chainConfig.nativeToken || {
+        name: 'Ether',
+        symbol: 'ETH',
+        decimals: 18
+      },
+      rpcUrls: {
+        default: { http: [chainConfig.rpcUrl || ''] }
+      }
+    },
+    transport: http()
   });
   
   const publicClient = createPublicClient({
-    chain,
-    transport: http(chainConfig.rpcUrl || '')
+    chain: {
+      id: Number(chainConfig.originalChainId),
+      name: chainConfig.chainName,
+      nativeCurrency: chainConfig.nativeToken || {
+        name: 'Ether',
+        symbol: 'ETH',
+        decimals: 18
+      },
+      rpcUrls: {
+        default: { http: [chainConfig.rpcUrl || ''] }
+      }
+    },
+    transport: http()
   });
   
   return {
     getAddress: async () => account.address,
     sendTransaction: async (params: any) => {
-      // Handle EVM transaction
+      // For EVM chains, we expect the transaction data to be in the params
       const hash = await walletClient.sendTransaction({
-        to: params.to as `0x${string}`,
-        data: params.data as `0x${string}`,
+        to: params.to,
         value: params.value ? BigInt(params.value) : undefined,
+        data: params.data,
+        gas: params.gas ? BigInt(params.gas) : undefined,
+        gasPrice: params.gasPrice ? BigInt(params.gasPrice) : undefined,
       });
+      
       return hash;
     },
     isSolana: false
-  };
-}
-
-// Create a Solana wallet provider
-async function createSolanaWalletProvider(seedPhrase: string): Promise<WalletProvider> {
-  // For simplicity in this demo, we'll create a keypair directly from the seed phrase
-  // In a production environment, you would use proper HD wallet derivation
-  
-  // Generate a deterministic seed from the mnemonic
-  const seed = await bip39.mnemonicToSeed(seedPhrase);
-  
-  // Create a hash of the seed to use as the keypair seed
-  // This is a simplified approach for the demo
-  const seedHash = Array.from(seed).slice(0, 32);
-  const keypair = Keypair.fromSeed(Uint8Array.from(seedHash));
-  
-  // Connect to Solana mainnet
-  const connection = new Connection('https://api.mainnet-beta.solana.com', 'confirmed');
-  
-  return {
-    getAddress: async () => keypair.publicKey.toBase58(),
-    sendTransaction: async (params: any) => {
-      // Handle Solana transaction
-      // This is a simplified implementation - in a real-world scenario,
-      // you would need to deserialize and handle the transaction based on the specific requirements
-      
-      // For Solana, we expect the transaction to be serialized in the 'data' field
-      if (!params.data) {
-        throw new Error('Missing transaction data for Solana transaction');
-      }
-      
-      // Deserialize the transaction
-      const serializedTx = Buffer.from(params.data.slice(2), 'hex'); // Remove '0x' prefix
-      const transaction = Transaction.from(serializedTx);
-      
-      // Sign the transaction
-      transaction.partialSign(keypair);
-      
-      // Send the transaction
-      const signature = await connection.sendRawTransaction(transaction.serialize());
-      
-      // Confirm the transaction
-      await connection.confirmTransaction(signature, 'confirmed');
-      
-      return signature;
-    },
-    isSolana: true
   };
 }

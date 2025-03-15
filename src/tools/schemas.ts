@@ -245,6 +245,30 @@ export const executeBridgeTransactionSchema = z.object({
 });
 
 /**
+ * Represents a single chain in the supported chains response
+ */
+export interface ChainInfo {
+  chainId: string;
+  originalChainId: string;
+  chainName: string;
+  nativeToken?: {
+    symbol: string;
+    name: string;
+    decimals: number;
+  };
+  explorerUrl?: string;
+  rpcUrl?: string;
+  isTestnet?: boolean;
+}
+
+/**
+ * Response from the supported-chains-info endpoint
+ */
+export interface SupportedChainsInfoResponse {
+  chains: ChainInfo[];
+}
+
+/**
  * Type definitions for tool parameters
  */
 export type SearchTokenParams = z.infer<typeof searchTokenSchema>;

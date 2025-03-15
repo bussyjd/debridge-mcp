@@ -9,6 +9,7 @@ import {
   GetBridgeQuoteParams,
   CreateBridgeOrderParams,
   ExecuteBridgeTransactionParams,
+  SupportedChainsInfoResponse
 } from "./schemas.js";
 import { createWalletProvider, getChainTypeFromAddress } from '../lib/wallet.js';
 
@@ -159,9 +160,8 @@ export async function createBridgeOrderHandler(
   params: CreateBridgeOrderParams
 ) {
   try {
+    // Create URL parameters
     const urlParams = new URLSearchParams();
-    
-    // Required parameters
     urlParams.append("srcChainId", params.srcChainId);
     urlParams.append("srcChainTokenIn", params.srcChainTokenIn);
     urlParams.append("srcChainTokenInAmount", params.srcChainTokenInAmount);
@@ -169,46 +169,12 @@ export async function createBridgeOrderHandler(
     urlParams.append("dstChainTokenOut", params.dstChainTokenOut);
     urlParams.append("dstChainTokenOutRecipient", params.dstChainTokenOutRecipient);
     urlParams.append("senderAddress", params.senderAddress);
+    urlParams.append("srcChainOrderAuthorityAddress", params.srcChainOrderAuthorityAddress || params.senderAddress);
+    urlParams.append("srcChainRefundAddress", params.senderAddress);
+    urlParams.append("dstChainOrderAuthorityAddress", params.dstChainTokenOutRecipient);
+    urlParams.append("referralCode", String(DEFAULT_REFERRAL_CODE));
+    urlParams.append("prependOperatingExpenses", "true");
     
-    // Source chain authority addresses
-    if (params.srcChainOrderAuthorityAddress) {
-      urlParams.append("srcChainOrderAuthorityAddress", params.srcChainOrderAuthorityAddress);
-    } else {
-      urlParams.append("srcChainOrderAuthorityAddress", params.senderAddress);
-    }
-    
-    // Source chain refund address
-    if (params.srcChainRefundAddress) {
-      urlParams.append("srcChainRefundAddress", params.srcChainRefundAddress);
-    } else {
-      urlParams.append("srcChainRefundAddress", params.senderAddress);
-    }
-    
-    // Destination chain authority address
-    if (params.dstChainOrderAuthorityAddress) {
-      urlParams.append("dstChainOrderAuthorityAddress", params.dstChainOrderAuthorityAddress);
-    } else {
-      urlParams.append("dstChainOrderAuthorityAddress", params.dstChainTokenOutRecipient);
-    }
-    
-    // Add referral code if not provided
-    if (!params.referralCode) {
-      params.referralCode = DEFAULT_REFERRAL_CODE.toString();
-    }
-    urlParams.append("referralCode", params.referralCode);
-    
-    // Operating expenses
-    const prependOperatingExpenses = params.prependOperatingExpenses !== undefined 
-      ? params.prependOperatingExpenses.toString() 
-      : "true";
-    urlParams.append("prependOperatingExpenses", prependOperatingExpenses);
-    
-    // Slippage
-    if (params.slippage) {
-      urlParams.append("slippage", params.slippage);
-    }
-    
-    // App identifier
     if (params.deBridgeApp) {
       urlParams.append("deBridgeApp", params.deBridgeApp);
     }
@@ -289,5 +255,26 @@ export async function executeBridgeTransactionHandler(
   } catch (error) {
     console.error("Error executing bridge transaction:", error);
     throw error;
+  }
+}
+
+/**
+ * Fetches the list of supported chains from the DLN API
+ * @returns A promise that resolves to the list of supported chains
+ */
+export async function getSupportedChainsHandler(): Promise<SupportedChainsInfoResponse> {
+  try {
+    const response = await fetch(`${DEBRIDGE_API_BASE_URL}/supported-chains-info`);
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+    }
+    
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Error fetching supported chains:", error);
+    throw new Error(`Failed to fetch supported chains: ${error}`);
   }
 }
