@@ -9,7 +9,10 @@ import {
   GetBridgeQuoteParams,
   CreateBridgeOrderParams,
   ExecuteBridgeTransactionParams,
-  SupportedChainsInfoResponse
+  SupportedChainsInfoResponse,
+  CheckTransactionStatusParams,
+  OrderStatusResponse,
+  OrderIdsResponse
 } from "./schemas.js";
 import { createWalletProvider, getChainTypeFromAddress } from '../lib/wallet.js';
 
@@ -332,17 +335,74 @@ export async function executeBridgeTransactionHandler(
  */
 export async function getSupportedChainsHandler(): Promise<SupportedChainsInfoResponse> {
   try {
-    const response = await fetch(`${DEBRIDGE_API_BASE_URL}/supported-chains-info`);
-    
+    // Try to fetch from API first
+    const url = `${DEBRIDGE_API_BASE_URL}/supported-chains-info`;
+    console.log("Fetching supported chains from:", url);
+
+    const response = await fetch(url);
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+      const text = await response.text();
+      console.error(`HTTP error! status: ${response.status}, body: ${text}`);
+      throw new Error(`Failed to fetch supported chains: ${text}`);
     }
-    
+
     const data = await response.json();
     return data;
   } catch (error) {
     console.error("Error fetching supported chains:", error);
-    throw new Error(`Failed to fetch supported chains: ${error}`);
+    throw error;
+  }
+}
+
+/**
+ * Check the status of a DeBridge transaction
+ * @param params Parameters containing the transaction hash
+ * @returns Status information for the transaction and associated orders
+ */
+export async function checkTransactionStatusHandler(
+  params: CheckTransactionStatusParams
+): Promise<OrderStatusResponse[]> {
+  try {
+    // First get the order IDs for the transaction
+    const orderIdsUrl = `${DEBRIDGE_API_BASE_URL}/dln/tx/${params.txHash}/order-ids`;
+    console.log("Getting order IDs from:", orderIdsUrl);
+
+    const orderIdsResponse = await fetch(orderIdsUrl);
+    if (!orderIdsResponse.ok) {
+      const text = await orderIdsResponse.text();
+      throw new Error(`HTTP error! status: ${orderIdsResponse.status}, body: ${text}`);
+    }
+
+    const orderIdsData = await orderIdsResponse.json() as OrderIdsResponse;
+    console.log("Order IDs response:", JSON.stringify(orderIdsData, null, 2));
+
+    if (!orderIdsData.orderIds || orderIdsData.orderIds.length === 0) {
+      throw new Error("No order IDs found for this transaction");
+    }
+
+    // Then get the status for each order
+    const statuses = await Promise.all(
+      orderIdsData.orderIds.map(async (orderId) => {
+        const statusUrl = `${DEBRIDGE_API_BASE_URL}/dln/order/${orderId}/status`;
+        console.log("Getting status from:", statusUrl);
+
+        const statusResponse = await fetch(statusUrl);
+        if (!statusResponse.ok) {
+          const text = await statusResponse.text();
+          throw new Error(`HTTP error! status: ${statusResponse.status}, body: ${text}`);
+        }
+
+        const statusData = await statusResponse.json() as OrderStatusResponse;
+        // Add the deBridge app link
+        statusData.orderLink = `https://app.debridge.finance/order?orderId=${orderId}`;
+        console.log("Status response:", JSON.stringify(statusData, null, 2));
+        return statusData;
+      })
+    );
+
+    return statuses;
+  } catch (error) {
+    console.error("Failed to check transaction status:", error);
+    throw new Error(`Failed to check transaction status: ${error}`);
   }
 }

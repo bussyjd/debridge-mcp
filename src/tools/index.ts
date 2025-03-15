@@ -9,6 +9,7 @@ import {
   createBridgeOrderHandler,
   executeBridgeTransactionHandler,
   getSupportedChainsHandler,
+  checkTransactionStatusHandler,
 } from "./handlers.js";
 
 /**
@@ -192,6 +193,24 @@ const getSupportedChainsTool: Tool = {
 };
 
 /**
+ * Tool for checking transaction status
+ */
+const checkTransactionStatusTool: Tool = {
+  name: "check_transaction_status",
+  description: "Check the status of a DeBridge transaction and get details about the associated orders.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      txHash: {
+        type: "string",
+        description: "Transaction hash to check status for (must be a valid 0x-prefixed hex string)",
+      },
+    },
+    required: ["txHash"],
+  },
+};
+
+/**
  * Export all DeBridge MCP tools
  */
 export const debridgeMcpTools: Tool[] = [
@@ -200,6 +219,7 @@ export const debridgeMcpTools: Tool[] = [
   createBridgeOrderTool,
   executeBridgeTransactionTool,
   getSupportedChainsTool,
+  checkTransactionStatusTool,
 ];
 
 /**
@@ -211,4 +231,5 @@ export const toolToHandler: Record<string, Function> = {
   create_bridge_order: createBridgeOrderHandler,
   execute_bridge_transaction: executeBridgeTransactionHandler,
   get_supported_chains: getSupportedChainsHandler,
+  check_transaction_status: checkTransactionStatusHandler,
 };

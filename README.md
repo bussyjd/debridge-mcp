@@ -10,6 +10,7 @@ A minimal Model Context Protocol (MCP) server for interacting with the DeBridge 
 - **Bridge Quotes**: Get quotes for cross-chain token transfers
 - **Order Creation**: Create bridge orders for transferring tokens between chains
 - **Transaction Execution**: Execute bridge transactions with proper wallet signing
+- **Transaction Verification**: Check the status of bridge transactions and associated orders
 
 ## Tools
 
@@ -20,6 +21,7 @@ The DeBridge MCP server provides the following tools:
 3. `get_bridge_quote`: Get a quote for bridging tokens between chains
 4. `create_bridge_order`: Create a bridge order for cross-chain token transfers
 5. `execute_bridge_transaction`: Execute a bridge transaction on any supported chain
+6. `check_transaction_status`: Verify the status of a bridge transaction and its orders
 
 ## Setup
 
@@ -127,6 +129,17 @@ pnpm start
       "data": "0x095ea7b3000000000000000000000000663f3ad617193148711d28f5334ee4ed07016602000000000000000000000000000000000000000000000000000000000000000a",
       "value": "0"
     }
+  }
+}
+```
+
+### Check Transaction Status
+
+```json
+{
+  "name": "check_transaction_status",
+  "arguments": {
+    "txHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
   }
 }
 ```

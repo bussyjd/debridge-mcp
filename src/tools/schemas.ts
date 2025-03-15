@@ -271,9 +271,45 @@ export interface SupportedChainsInfoResponse {
 }
 
 /**
+ * Interface representing the response from getOrderIds
+ */
+export interface OrderIdsResponse {
+  orderIds: string[];
+}
+
+/**
+ * Interface representing the response from getOrderStatus
+ */
+export interface OrderStatusResponse {
+  status:
+    | "None"
+    | "Created"
+    | "Fulfilled"
+    | "SentUnlock"
+    | "OrderCancelled"
+    | "SentOrderCancel"
+    | "ClaimedUnlock"
+    | "ClaimedOrderCancel";
+  orderId: string;
+  orderLink: string;
+}
+
+/**
+ * Schema for check_transaction_status tool parameters
+ */
+export const checkTransactionStatusSchema = z.object({
+  /** Transaction hash to check status for */
+  txHash: z
+    .string()
+    .regex(/^0x[a-fA-F0-9]{64}$/, "Transaction hash must be a valid hex string")
+    .describe("Transaction hash to check status for"),
+});
+
+/**
  * Type definitions for tool parameters
  */
 export type SearchTokenParams = z.infer<typeof searchTokenSchema>;
 export type GetBridgeQuoteParams = z.infer<typeof getBridgeQuoteSchema>;
 export type CreateBridgeOrderParams = z.infer<typeof createBridgeOrderSchema>;
 export type ExecuteBridgeTransactionParams = z.infer<typeof executeBridgeTransactionSchema>;
+export type CheckTransactionStatusParams = z.infer<typeof checkTransactionStatusSchema>;
