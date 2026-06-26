@@ -1,24 +1,29 @@
 /**
- * Handler implementations for DeBridge MCP tools
+ * Handler implementations for deBridge MCP tools.
+ *
+ * This server intentionally returns unsigned transaction payloads only. It does
+ * not own keys, derive wallets, or submit transactions.
  */
 
-import { Client, PublicActions, WalletActions } from "viem";
-import { DEBRIDGE_API_BASE_URL, DEFAULT_REFERRAL_CODE, CHAIN_IDS } from "../lib/constants.js";
+import { createPublicClient, getAddress, http } from "viem";
 import {
+  DLN_API_BASE_URL,
+  DLN_STATS_API_BASE_URL,
+  ERC20_ABI,
+  EVM_NATIVE_TOKEN,
+} from "../lib/constants.js";
+import {
+  CreateTxWithReferralParams,
+  GetOrdersByReferralCodeParams,
   SearchTokenParams,
-  GetBridgeQuoteParams,
-  CreateBridgeOrderParams,
-  ExecuteBridgeTransactionParams,
+  SourcePreflightParams,
   SupportedChainsInfoResponse,
-  CheckTransactionStatusParams,
-  OrderStatusResponse,
-  OrderIdsResponse
+  createTxWithReferralSchema,
+  getOrdersByReferralCodeSchema,
+  searchTokenSchema,
+  sourcePreflightSchema,
 } from "./schemas.js";
-import { createWalletProvider, getChainTypeFromAddress } from '../lib/wallet.js';
 
-/**
- * Interface for token information
- */
 interface TokenInfo {
   name: string;
   symbol: string;
@@ -26,383 +31,372 @@ interface TokenInfo {
   decimals: number;
 }
 
-/**
- * Type for wallet client with required actions
- */
-type WalletClient = Client & PublicActions & WalletActions;
-
-/**
- * Search for tokens on a specific chain
- * @param walletClient Viem wallet client
- * @param params Search parameters
- * @returns Matching tokens with their details
- */
-export async function searchTokenHandler(
-  walletClient: WalletClient,
-  params: SearchTokenParams
-) {
-  try {
-    const url = `${DEBRIDGE_API_BASE_URL}/token-list?chainId=${params.chainId}`;
-    console.log("Fetching token information from:", url);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
-    }
-
-    const responseData = await response.json();
-    const data = responseData.tokens;
-
-    // If no search term, return all tokens
-    if (!params.search) {
-      return { tokens: data };
-    }
-
-    // Filter tokens by search term
-    const searchTerm = params.search.toLowerCase();
-    const tokens = Object.entries(data as Record<string, TokenInfo>)
-      .filter(
-        ([, token]: [string, TokenInfo]) =>
-          token.symbol && token.symbol.toLowerCase().includes(searchTerm)
-      )
-      .reduce(
-        (acc, [address, token]: [string, TokenInfo]) => {
-          acc[address] = {
-            name: token.name,
-            symbol: token.symbol,
-            address,
-            decimals: token.decimals,
-          };
-          return acc;
-        },
-        {} as Record<string, TokenInfo>
-      );
-
-    // Log matched tokens
-    const matchedTokens = Object.values(tokens);
-    if (matchedTokens.length > 0) {
-      console.log(
-        `Found ${matchedTokens.length} token(s) matching "${searchTerm}":`,
-        JSON.stringify(matchedTokens, null, 2)
-      );
-    }
-
-    return { tokens };
-  } catch (error) {
-    console.error("Error searching for tokens:", error);
-    throw error;
-  }
-}
-
-/**
- * Get a quote for bridging tokens between chains
- * @param walletClient Viem wallet client
- * @param params Bridge quote parameters
- * @returns Quote information including estimated amounts and fees
- */
-export async function getBridgeQuoteHandler(
-  walletClient: WalletClient,
-  params: GetBridgeQuoteParams
-) {
-  try {
-    const isSameChain = params.srcChainId === params.dstChainId;
-    const userAddress = await walletClient.getAddresses().then((addresses: `0x${string}`[]) => addresses[0]);
-
-    const url = isSameChain
-      ? `${DEBRIDGE_API_BASE_URL}/chain/transaction?${new URLSearchParams({
-          chainId: params.srcChainId,
-          tokenIn: params.srcChainTokenIn,
-          tokenInAmount: params.srcChainTokenInAmount,
-          tokenOut: params.dstChainTokenOut,
-          tokenOutRecipient: userAddress,
-          slippage: params.slippage?.toString() || "auto",
-          affiliateFeePercent: "0",
-        })}`
-      : `${DEBRIDGE_API_BASE_URL}/dln/order/create-tx?${new URLSearchParams({
-          srcChainId: params.srcChainId,
-          srcChainTokenIn: params.srcChainTokenIn,
-          srcChainTokenInAmount: params.srcChainTokenInAmount,
-          dstChainId: params.dstChainId,
-          dstChainTokenOut: params.dstChainTokenOut,
-          dstChainTokenOutAmount: "auto",
-          prependOperatingExpenses: "true",
-          additionalTakerRewardBps: "0",
-        })}`;
-
-    console.log("Making request to:", url);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
-    }
-
-    const data = await response.json();
-    console.log("Bridge quote response:", JSON.stringify(data, null, 2));
-    
-    if (data.error) {
-      throw new Error(data.error);
-    }
-    
-    return data;
-  } catch (error) {
-    console.error("Error getting bridge quote:", error);
-    throw new Error(`Failed to get bridge quote: ${error}`);
-  }
-}
-
-/**
- * Create a bridge order for cross-chain token transfers
- * @param walletClient Viem wallet client
- * @param params Bridge order parameters
- * @returns Order details including transaction data
- */
-export async function createBridgeOrderHandler(
-  walletClient: WalletClient,
-  params: CreateBridgeOrderParams
-) {
-  try {
-    // Create URL parameters
-    const urlParams = new URLSearchParams();
-    urlParams.append("srcChainId", params.srcChainId);
-    urlParams.append("srcChainTokenIn", params.srcChainTokenIn);
-    urlParams.append("srcChainTokenInAmount", params.srcChainTokenInAmount);
-    urlParams.append("dstChainId", params.dstChainId);
-    urlParams.append("dstChainTokenOut", params.dstChainTokenOut);
-    urlParams.append("dstChainTokenOutRecipient", params.dstChainTokenOutRecipient);
-    urlParams.append("senderAddress", params.senderAddress);
-    urlParams.append("srcChainOrderAuthorityAddress", params.srcChainOrderAuthorityAddress || params.senderAddress);
-    urlParams.append("srcChainRefundAddress", params.senderAddress);
-    urlParams.append("dstChainOrderAuthorityAddress", params.dstChainTokenOutRecipient);
-    urlParams.append("referralCode", String(DEFAULT_REFERRAL_CODE));
-    urlParams.append("prependOperatingExpenses", "true");
-    
-    if (params.deBridgeApp) {
-      urlParams.append("deBridgeApp", params.deBridgeApp);
-    }
-
-    const url = `${DEBRIDGE_API_BASE_URL}/dln/order/create-tx?${urlParams}`;
-    console.log("Making create bridge order request to:", url);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`HTTP error! status: ${response.status}, body: ${text}`);
-    }
-
-    const data = await response.json();
-    if (data.error) {
-      throw new Error(data.error);
-    }
-
-    // Format the txData to ensure it's properly stringified
-    if (data.tx?.data) {
-      data.tx.data = data.tx.data.toString();
-    }
-
-    return data;
-  } catch (error) {
-    console.error("Error creating bridge order:", error);
-    throw new Error(`Failed to create bridge order: ${error}`);
-  }
-}
-
-/**
- * Execute a bridge transaction
- * @param walletClient Viem wallet client
- * @param params Bridge transaction parameters
- * @returns Transaction hash and confirmation status
- */
-export async function executeBridgeTransactionHandler(
-  walletClient: any,
-  params: ExecuteBridgeTransactionParams
-) {
-  const { txData } = params;
-
-  // Validate transaction data
-  if (!txData.to || !txData.data) {
-    throw new Error("Invalid transaction data: missing 'to' or 'data' field");
-  }
-
-  console.log(`Executing bridge transaction to ${txData.to}`);
-  console.log(`Transaction data: ${txData.data.slice(0, 50)}...`);
-  
-  try {
-    // Determine chain type based on the 'to' address
-    const chainType = getChainTypeFromAddress(txData.to);
-    
-    // Get the seed phrase from environment variables
-    const seedPhrase = process.env.SEED_PHRASE;
-    if (!seedPhrase) {
-      throw new Error("SEED_PHRASE environment variable is required");
-    }
-    
-    // For Solana transactions, we use the Solana chain ID
-    // For EVM transactions, we need to determine the chain ID from the transaction data
-    // or from the 'to' address network
-    let chainId: string;
-    
-    if (chainType === 'solana') {
-      // Use Solana chain ID
-      chainId = String(CHAIN_IDS.SOLANA);
-      console.log(`Detected Solana transaction, using chain ID: ${chainId}`);
-    } else {
-      // For EVM, try to determine the chain from params or use a default
-      if (params.chainId) {
-        chainId = params.chainId;
-      } else if ('chainId' in txData && txData.chainId) {
-        chainId = String(txData.chainId);
-      } else {
-        // If no chain ID is provided, try to determine it from supported chains
-        // This is a simplified approach - in production, you would use more sophisticated chain detection
-        console.log("No chain ID provided, attempting to determine from supported chains...");
-        try {
-          const supportedChains = await getSupportedChainsHandler();
-          // This is a simplified approach to find a matching chain
-          // In production, you would use more sophisticated chain detection
-          const matchingChain = supportedChains.chains.find(chain => 
-            chain.chainType === 'evm' && 
-            chain.nativeToken && 
-            chain.nativeToken.symbol
-          );
-          
-          if (matchingChain) {
-            chainId = matchingChain.chainId;
-            console.log(`Determined chain ID from supported chains: ${chainId}`);
-          } else {
-            // Default to Ethereum if we can't determine the chain
-            chainId = String(CHAIN_IDS.ETHEREUM);
-            console.log(`Could not determine chain ID, defaulting to Ethereum: ${chainId}`);
-          }
-        } catch (error) {
-          // If we can't get supported chains, default to Ethereum
-          chainId = String(CHAIN_IDS.ETHEREUM);
-          console.log(`Error determining chain ID, defaulting to Ethereum: ${chainId}`);
-        }
-      }
-    }
-    
-    // Create the appropriate wallet provider based on chain type and ID
-    console.log(`Creating wallet provider for chain ID: ${chainId}`);
-    const walletProvider = await createWalletProvider(seedPhrase, chainId);
-    
-    // Prepare transaction parameters based on chain type
-    const txParams: any = {
-      to: txData.to,
-      data: txData.data,
+interface DlnCreateTxResponse {
+  tx?: {
+    to?: string;
+    data?: string;
+    value?: string | number;
+    [key: string]: unknown;
+  };
+  orderId?: string;
+  order?: {
+    orderId?: string;
+    [key: string]: unknown;
+  };
+  estimation?: {
+    srcChainTokenIn?: {
+      amount?: string;
+      [key: string]: unknown;
     };
-    
-    // Add value for EVM transactions if provided
-    if (chainType === 'evm' && txData.value) {
-      txParams.value = txData.value;
-    }
-    
-    // Add gas limit for EVM transactions if provided
-    if (chainType === 'evm' && 'gasLimit' in txData && txData.gasLimit) {
-      txParams.gas = txData.gasLimit;
-    }
-    
-    // Send the transaction using the wallet provider
-    console.log(`Sending transaction with params:`, {
-      to: txParams.to,
-      dataLength: txParams.data.length,
-      value: txParams.value,
-      gas: txParams.gas
-    });
-    
-    const hash = await walletProvider.sendTransaction(txParams);
-    
-    console.log(`Transaction sent successfully: ${hash}`);
-    return { 
-      hash,
-      chainId,
-      chainType
+    dstChainTokenOut?: {
+      amount?: string;
+      recommendedAmount?: string;
+      [key: string]: unknown;
     };
-  } catch (error) {
-    console.error("Error executing bridge transaction:", error);
-    // Provide more detailed error information
-    if (error instanceof Error) {
-      throw new Error(`Failed to execute bridge transaction: ${error.message}`);
-    }
-    throw new Error(`Failed to execute bridge transaction: ${String(error)}`);
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export interface PreflightBalances {
+  nativeBalance: string;
+  tokenBalance?: string;
+  tokenAllowance?: string;
+}
+
+export interface PreflightAssessment {
+  chainId: string;
+  ownerAddress: string;
+  tokenAddress: string;
+  spenderAddress: string;
+  requiredTokenAmount: string;
+  txValue: string;
+  nativeBalance: string;
+  tokenBalance?: string;
+  tokenAllowance?: string;
+  hasNativeForTxValue: boolean;
+  hasTokenBalance: boolean;
+  hasTokenAllowance: boolean;
+  missingNativeForTxValue: string;
+  missingTokenBalance: string;
+  missingTokenAllowance: string;
+  ready: boolean;
+}
+
+export function requireReferralCode(referralCode?: string): string {
+  const resolved = referralCode?.trim() || process.env.DEBRIDGE_REFERRAL_CODE?.trim();
+
+  if (!resolved) {
+    throw new Error(
+      "referralCode is required unless DEBRIDGE_REFERRAL_CODE is configured"
+    );
+  }
+
+  return resolved;
+}
+
+function dlnUrl(path: string): string {
+  return `${DLN_API_BASE_URL}${path}`;
+}
+
+function statsUrl(path: string): string {
+  return `${DLN_STATS_API_BASE_URL}${path}`;
+}
+
+function appendIfDefined(params: URLSearchParams, key: string, value: unknown) {
+  if (value !== undefined && value !== null && value !== "") {
+    params.append(key, String(value));
   }
 }
 
-/**
- * Fetches the list of supported chains from the DLN API
- * @returns A promise that resolves to the list of supported chains
- */
-export async function getSupportedChainsHandler(): Promise<SupportedChainsInfoResponse> {
-  try {
-    // Try to fetch from API first
-    const url = `${DEBRIDGE_API_BASE_URL}/supported-chains-info`;
-    console.log("Fetching supported chains from:", url);
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`HTTP error! status: ${response.status}, body: ${text}`);
-      throw new Error(`Failed to fetch supported chains: ${text}`);
-    }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Error fetching supported chains:", error);
-    throw error;
-  }
+function isNativeToken(tokenAddress: string): boolean {
+  return tokenAddress.toLowerCase() === EVM_NATIVE_TOKEN.toLowerCase();
 }
 
-/**
- * Check the status of a DeBridge transaction
- * @param params Parameters containing the transaction hash
- * @returns Status information for the transaction and associated orders
- */
-export async function checkTransactionStatusHandler(
-  params: CheckTransactionStatusParams
-): Promise<OrderStatusResponse[]> {
-  try {
-    // First get the order IDs for the transaction
-    const orderIdsUrl = `${DEBRIDGE_API_BASE_URL}/dln/tx/${params.txHash}/order-ids`;
-    console.log("Getting order IDs from:", orderIdsUrl);
+function normalizeAmount(value: unknown): string {
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "number") return Math.trunc(value).toString();
+  if (typeof value === "string" && value.length > 0) return value;
+  return "0";
+}
 
-    const orderIdsResponse = await fetch(orderIdsUrl);
-    if (!orderIdsResponse.ok) {
-      const text = await orderIdsResponse.text();
-      throw new Error(`HTTP error! status: ${orderIdsResponse.status}, body: ${text}`);
-    }
+export function buildCreateTxQuery(
+  params: CreateTxWithReferralParams,
+  referralCode: string
+): URLSearchParams {
+  const query = new URLSearchParams();
+  query.append("srcChainId", params.srcChainId);
+  query.append("srcChainTokenIn", params.srcChainTokenIn);
+  query.append("srcChainTokenInAmount", params.srcChainTokenInAmount);
+  query.append("dstChainId", params.dstChainId);
+  query.append("dstChainTokenOut", params.dstChainTokenOut);
+  query.append("dstChainTokenOutAmount", params.dstChainTokenOutAmount);
+  query.append("dstChainTokenOutRecipient", params.dstChainTokenOutRecipient);
+  query.append("senderAddress", params.senderAddress);
+  query.append(
+    "srcChainOrderAuthorityAddress",
+    params.srcChainOrderAuthorityAddress || params.senderAddress
+  );
+  query.append("srcChainRefundAddress", params.srcChainRefundAddress || params.senderAddress);
+  query.append(
+    "dstChainOrderAuthorityAddress",
+    params.dstChainOrderAuthorityAddress || params.dstChainTokenOutRecipient
+  );
+  query.append("referralCode", referralCode);
+  query.append("prependOperatingExpenses", String(params.prependOperatingExpenses));
 
-    const orderIdsData = await orderIdsResponse.json() as OrderIdsResponse;
-    console.log("Order IDs response:", JSON.stringify(orderIdsData, null, 2));
+  appendIfDefined(query, "slippage", params.slippage);
+  appendIfDefined(query, "additionalTakerRewardBps", params.additionalTakerRewardBps);
+  appendIfDefined(query, "deBridgeApp", params.deBridgeApp);
 
-    if (!orderIdsData.orderIds || orderIdsData.orderIds.length === 0) {
-      throw new Error("No order IDs found for this transaction");
-    }
+  return query;
+}
 
-    // Then get the status for each order
-    const statuses = await Promise.all(
-      orderIdsData.orderIds.map(async (orderId) => {
-        const statusUrl = `${DEBRIDGE_API_BASE_URL}/dln/order/${orderId}/status`;
-        console.log("Getting status from:", statusUrl);
+export function normalizeCreateTxResponse(
+  data: DlnCreateTxResponse,
+  referralCode: string,
+  request: Record<string, string>
+) {
+  const tx = data.tx ?? {};
+  const spenderAddress = tx.to;
+  const txValue = normalizeAmount(tx.value);
+  const sourceTokenRequiredAmount =
+    data.estimation?.srcChainTokenIn?.amount || request.srcChainTokenInAmount;
+  const destinationTokenEstimatedAmount =
+    data.estimation?.dstChainTokenOut?.recommendedAmount ||
+    data.estimation?.dstChainTokenOut?.amount;
 
-        const statusResponse = await fetch(statusUrl);
-        if (!statusResponse.ok) {
-          const text = await statusResponse.text();
-          throw new Error(`HTTP error! status: ${statusResponse.status}, body: ${text}`);
-        }
+  return {
+    referralCode,
+    orderId: data.orderId || data.order?.orderId,
+    spenderAddress,
+    sourceTokenRequiredAmount,
+    destinationTokenEstimatedAmount,
+    txValue,
+    tx,
+    unsignedTx: tx,
+    quote: data.estimation || null,
+    request,
+    raw: data,
+  };
+}
 
-        const statusData = await statusResponse.json() as OrderStatusResponse;
-        // Add the deBridge app link
-        statusData.orderLink = `https://app.debridge.finance/order?orderId=${orderId}`;
-        console.log("Status response:", JSON.stringify(statusData, null, 2));
-        return statusData;
-      })
+export function resolveRpcUrl(chainId: string, rpcUrl?: string): string {
+  const resolved =
+    rpcUrl ||
+    process.env[`DEBRIDGE_RPC_URL_${chainId}`] ||
+    process.env[`EVM_RPC_URL_${chainId}`] ||
+    process.env[`CHAIN_${chainId}_RPC_URL`] ||
+    process.env[`RPC_URL_${chainId}`] ||
+    process.env.DEBRIDGE_RPC_URL ||
+    process.env.EVM_RPC_URL;
+
+  if (!resolved) {
+    throw new Error(
+      `Missing RPC URL for chain ${chainId}; set DEBRIDGE_RPC_URL_${chainId}, EVM_RPC_URL_${chainId}, or pass rpcUrl`
+    );
+  }
+
+  return resolved;
+}
+
+export function assessPreflight(
+  params: SourcePreflightParams,
+  balances: PreflightBalances
+): PreflightAssessment {
+  const requiredTokenAmount = BigInt(params.tokenAmount);
+  const txValue = BigInt(params.txValue);
+  const nativeBalance = BigInt(balances.nativeBalance);
+  const tokenBalance = balances.tokenBalance ? BigInt(balances.tokenBalance) : undefined;
+  const tokenAllowance = balances.tokenAllowance
+    ? BigInt(balances.tokenAllowance)
+    : undefined;
+  const nativeToken = isNativeToken(params.tokenAddress);
+
+  const hasNativeForTxValue = nativeBalance >= txValue;
+  const hasTokenBalance = nativeToken
+    ? nativeBalance >= requiredTokenAmount + txValue
+    : (tokenBalance ?? 0n) >= requiredTokenAmount;
+  const hasTokenAllowance = nativeToken
+    ? true
+    : (tokenAllowance ?? 0n) >= requiredTokenAmount;
+
+  const missingNativeForTxValue =
+    nativeBalance >= txValue ? "0" : (txValue - nativeBalance).toString();
+  const missingTokenBalance = hasTokenBalance
+    ? "0"
+    : nativeToken
+      ? (requiredTokenAmount + txValue - nativeBalance).toString()
+      : (requiredTokenAmount - (tokenBalance ?? 0n)).toString();
+  const missingTokenAllowance = hasTokenAllowance
+    ? "0"
+    : (requiredTokenAmount - (tokenAllowance ?? 0n)).toString();
+
+  return {
+    chainId: params.chainId,
+    ownerAddress: getAddress(params.ownerAddress),
+    tokenAddress: getAddress(params.tokenAddress),
+    spenderAddress: getAddress(params.spenderAddress),
+    requiredTokenAmount: requiredTokenAmount.toString(),
+    txValue: txValue.toString(),
+    nativeBalance: nativeBalance.toString(),
+    tokenBalance: tokenBalance?.toString(),
+    tokenAllowance: tokenAllowance?.toString(),
+    hasNativeForTxValue,
+    hasTokenBalance,
+    hasTokenAllowance,
+    missingNativeForTxValue,
+    missingTokenBalance,
+    missingTokenAllowance,
+    ready: hasNativeForTxValue && hasTokenBalance && hasTokenAllowance,
+  };
+}
+
+export async function searchTokenHandler(args: unknown) {
+  const params = searchTokenSchema.parse(args ?? {});
+  const url = dlnUrl(`/token-list?chainId=${encodeURIComponent(params.chainId)}`);
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`DLN token-list failed: ${response.status} ${text}`);
+  }
+
+  const responseData = await response.json();
+  const data = responseData.tokens;
+
+  if (!params.search) {
+    return { tokens: data };
+  }
+
+  const searchTerm = params.search.toLowerCase();
+  const tokens = Object.entries(data as Record<string, TokenInfo>)
+    .filter(
+      ([, token]: [string, TokenInfo]) =>
+        token.symbol && token.symbol.toLowerCase().includes(searchTerm)
+    )
+    .reduce(
+      (acc, [address, token]: [string, TokenInfo]) => {
+        acc[address] = {
+          name: token.name,
+          symbol: token.symbol,
+          address,
+          decimals: token.decimals,
+        };
+        return acc;
+      },
+      {} as Record<string, TokenInfo>
     );
 
-    return statuses;
-  } catch (error) {
-    console.error("Failed to check transaction status:", error);
-    throw new Error(`Failed to check transaction status: ${error}`);
+  return { tokens };
+}
+
+export async function getSupportedChainsHandler(): Promise<SupportedChainsInfoResponse> {
+  const response = await fetch(dlnUrl("/supported-chains-info"));
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`DLN supported-chains-info failed: ${response.status} ${text}`);
   }
+
+  return (await response.json()) as SupportedChainsInfoResponse;
+}
+
+export async function createTxWithReferralHandler(args: unknown) {
+  const params = createTxWithReferralSchema.parse(args ?? {});
+  const referralCode = requireReferralCode(params.referralCode);
+  const query = buildCreateTxQuery(params, referralCode);
+  const request = Object.fromEntries(query.entries());
+  const response = await fetch(dlnUrl(`/dln/order/create-tx?${query}`));
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`DLN create-tx failed: ${response.status} ${text}`);
+  }
+
+  const data = (await response.json()) as DlnCreateTxResponse;
+  if (data.error) {
+    throw new Error(String(data.error));
+  }
+
+  return normalizeCreateTxResponse(data, referralCode, request);
+}
+
+export async function preflightSourceTxHandler(args: unknown) {
+  const params = sourcePreflightSchema.parse(args ?? {});
+  const rpcUrl = resolveRpcUrl(params.chainId, params.rpcUrl);
+  const client = createPublicClient({
+    chain: {
+      id: Number(params.chainId),
+      name: `eip155:${params.chainId}`,
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: { default: { http: [rpcUrl] } },
+    },
+    transport: http(rpcUrl),
+  });
+
+  const owner = getAddress(params.ownerAddress);
+  const nativeBalance = await client.getBalance({ address: owner });
+  const balances: PreflightBalances = {
+    nativeBalance: nativeBalance.toString(),
+  };
+
+  if (!isNativeToken(params.tokenAddress)) {
+    const token = getAddress(params.tokenAddress);
+    const spender = getAddress(params.spenderAddress);
+    const [tokenBalance, tokenAllowance] = await Promise.all([
+      client.readContract({
+        address: token,
+        abi: ERC20_ABI,
+        functionName: "balanceOf",
+        args: [owner],
+      }),
+      client.readContract({
+        address: token,
+        abi: ERC20_ABI,
+        functionName: "allowance",
+        args: [owner, spender],
+      }),
+    ]);
+
+    balances.tokenBalance = tokenBalance.toString();
+    balances.tokenAllowance = tokenAllowance.toString();
+  }
+
+  return {
+    rpcUrl,
+    ...assessPreflight(params, balances),
+  };
+}
+
+export async function getOrdersByReferralCodeHandler(args: unknown) {
+  const params = getOrdersByReferralCodeSchema.parse(args ?? {});
+  const referralCode = requireReferralCode(params.referralCode);
+  const body = {
+    giveChainIds: params.giveChainIds,
+    orderStates: params.orderStates,
+    externalCallStates: params.externalCallStates,
+    skip: params.skip,
+    take: params.take,
+    referralCode,
+    ...(params.blockTimestampFrom
+      ? { blockTimestampFrom: params.blockTimestampFrom }
+      : {}),
+  };
+
+  const response = await fetch(statsUrl("/Orders/filteredList"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`DLN referral order lookup failed: ${response.status} ${text}`);
+  }
+
+  return {
+    referralCode,
+    request: body,
+    result: await response.json(),
+  };
 }

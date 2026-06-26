@@ -1,190 +1,39 @@
 /**
- * Tool definitions and exports for DeBridge MCP server
+ * Tool definitions and exports for the deBridge MCP server.
  */
 
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import {
-  searchTokenHandler,
-  getBridgeQuoteHandler,
-  createBridgeOrderHandler,
-  executeBridgeTransactionHandler,
+  createTxWithReferralHandler,
+  getOrdersByReferralCodeHandler,
   getSupportedChainsHandler,
-  checkTransactionStatusHandler,
+  preflightSourceTxHandler,
+  searchTokenHandler,
 } from "./handlers.js";
 
-/**
- * Tool for searching tokens on a specific chain
- */
 const searchTokenTool: Tool = {
   name: "search_token",
-  description: "Search for tokens on a specific blockchain. For EVM chains, use 0x-prefixed addresses. For Solana, use base58 addresses.",
+  description:
+    "Search for tokens on a deBridge-supported chain. Use this before creating a transaction.",
   inputSchema: {
     type: "object",
     properties: {
       chainId: {
         type: "string",
-        description: "Chain ID to search tokens on (e.g., '1' for Ethereum, '56' for BSC, '7565164' for Solana)",
+        description: "Chain ID to search tokens on, for example 8453 for Base",
       },
       search: {
         type: "string",
-        description: "Optional search term to filter tokens by symbol (e.g., 'USDC', 'ETH')",
+        description: "Optional token symbol search term, for example USDC or OBOL",
       },
     },
     required: ["chainId"],
   },
 };
 
-/**
- * Tool for getting a bridge quote
- */
-const getBridgeQuoteTool: Tool = {
-  name: "get_bridge_quote",
-  description: "Get a quote for bridging tokens between chains. Use search_token first to get correct token addresses.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      srcChainId: {
-        type: "string",
-        description: "Source chain ID (e.g., '1' for Ethereum)",
-      },
-      srcChainTokenIn: {
-        type: "string",
-        description: "Token address on source chain. For EVM: use 0x0000000000000000000000000000000000000000 for native token.",
-      },
-      srcChainTokenInAmount: {
-        type: "string",
-        description: "Amount of input tokens in base units (e.g., wei for ETH, 10^6 for USDT)",
-      },
-      dstChainId: {
-        type: "string",
-        description: "Destination chain ID (e.g., '56' for BSC, '7565164' for Solana)",
-      },
-      dstChainTokenOut: {
-        type: "string",
-        description: "Token address on destination chain",
-      },
-      slippage: {
-        type: "string",
-        description: "Optional slippage tolerance percentage (0-100)",
-      },
-    },
-    required: ["srcChainId", "srcChainTokenIn", "srcChainTokenInAmount", "dstChainId", "dstChainTokenOut"],
-  },
-};
-
-/**
- * Tool for creating a bridge order
- */
-const createBridgeOrderTool: Tool = {
-  name: "create_bridge_order",
-  description: `Create a bridge order to transfer tokens between chains.
-Use the target asset's full address (e.g., 0xdAC17F958D2ee523a2206206994597C13D831ec7) for dstChainTokenOut, not the ticker (e.g., USDT).
-
-EVM to EVM:
-- Set dstChainTokenOutRecipient to recipient's EVM address
-- Set dstChainTokenOut to the ERC-20 format address of the token to receive
-
-To Solana (7565164):
-- Set dstChainTokenOutRecipient to Solana recipient address (base58)
-- Set dstChainTokenOut to the base58 address of the token to receive on Solana
-
-From Solana:
-- Set dstChainTokenOutRecipient to EVM recipient address (0x-prefixed)
-- Set dstChainTokenOut to the ERC-20 format address of the token to receive`,
-  inputSchema: {
-    type: "object",
-    properties: {
-      srcChainId: {
-        type: "string",
-        description: "Source chain ID (e.g., '1' for Ethereum, '56' for BSC)",
-      },
-      srcChainTokenIn: {
-        type: "string",
-        description: "Token address on source chain. For EVM: use 0x0000000000000000000000000000000000000000 for native token.",
-      },
-      srcChainTokenInAmount: {
-        type: "string",
-        description: "Amount of input tokens in base units (e.g., wei for ETH, 10^6 for USDT)",
-      },
-      dstChainId: {
-        type: "string",
-        description: "Destination chain ID (e.g., '56' for BSC, '7565164' for Solana)",
-      },
-      dstChainTokenOut: {
-        type: "string",
-        description: "Token address on destination chain",
-      },
-      dstChainTokenOutRecipient: {
-        type: "string",
-        description: "Recipient address on destination chain. For EVM: use 0x-prefixed address. For Solana: use base58 wallet address.",
-      },
-      senderAddress: {
-        type: "string",
-        description: "Sender's address on the source chain",
-      },
-      referralCode: {
-        type: "string",
-        description: "Optional referral code for earning additional deBridge points",
-      },
-      slippage: {
-        type: "string",
-        description: "Optional slippage tolerance percentage (0-100)",
-      },
-    },
-    required: ["srcChainId", "srcChainTokenIn", "srcChainTokenInAmount", "dstChainId", "dstChainTokenOut", "dstChainTokenOutRecipient", "senderAddress"],
-  },
-};
-
-/**
- * Tool for executing a bridge transaction
- */
-const executeBridgeTransactionTool: Tool = {
-  name: "execute_bridge_transaction",
-  description: "Execute a bridge transaction using tx data from create_bridge_order tool. Always ask for confirmation before proceeding.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      txData: {
-        type: "object",
-        properties: {
-          to: {
-            type: "string",
-            description: "Target address for the transaction",
-          },
-          data: {
-            type: "string",
-            description: "Transaction data",
-          },
-          value: {
-            type: "string",
-            description: "Transaction value (for native token transfers)",
-          },
-          gasLimit: {
-            type: "number",
-            description: "Gas limit for the transaction",
-          },
-          chainId: {
-            type: "number",
-            description: "Chain ID for the transaction",
-          },
-        },
-        required: ["to", "data"],
-      },
-      chainId: {
-        type: "string",
-        description: "Chain ID to use for the transaction (overrides txData.chainId if both are provided)",
-      },
-    },
-    required: ["txData"],
-  },
-};
-
-/**
- * Tool for getting supported chains
- */
 const getSupportedChainsTool: Tool = {
   name: "get_supported_chains",
-  description: "Get a list of all supported chains with their details including chain IDs, names, and native tokens.",
+  description: "Get deBridge-supported chains from the DLN API.",
   inputSchema: {
     type: "object",
     properties: {},
@@ -192,44 +41,185 @@ const getSupportedChainsTool: Tool = {
   },
 };
 
-/**
- * Tool for checking transaction status
- */
-const checkTransactionStatusTool: Tool = {
-  name: "check_transaction_status",
-  description: "Check the status of a DeBridge transaction and get details about the associated orders.",
+const createTxWithReferralTool: Tool = {
+  name: "create_tx_with_referral",
+  description:
+    "Create an unsigned DLN transaction payload and always include a deBridge referral code. This tool never signs or submits transactions.",
   inputSchema: {
     type: "object",
     properties: {
-      txHash: {
+      srcChainId: { type: "string", description: "Source chain ID" },
+      srcChainTokenIn: { type: "string", description: "Source token address" },
+      srcChainTokenInAmount: {
         type: "string",
-        description: "Transaction hash to check status for (must be a valid 0x-prefixed hex string)",
+        description: "Input amount in source token base units",
+      },
+      dstChainId: { type: "string", description: "Destination chain ID" },
+      dstChainTokenOut: {
+        type: "string",
+        description: "Destination token address",
+      },
+      dstChainTokenOutAmount: {
+        type: "string",
+        description: "Destination output amount in base units, or auto",
+        default: "auto",
+      },
+      dstChainTokenOutRecipient: {
+        type: "string",
+        description: "Destination recipient address",
+      },
+      senderAddress: {
+        type: "string",
+        description: "Source-chain sender address",
+      },
+      srcChainOrderAuthorityAddress: {
+        type: "string",
+        description: "Optional source-chain order authority; defaults to senderAddress",
+      },
+      srcChainRefundAddress: {
+        type: "string",
+        description: "Optional source-chain refund address; defaults to senderAddress",
+      },
+      dstChainOrderAuthorityAddress: {
+        type: "string",
+        description:
+          "Optional destination-chain order authority; defaults to dstChainTokenOutRecipient",
+      },
+      referralCode: {
+        type: "string",
+        description:
+          "deBridge referral code. If omitted, DEBRIDGE_REFERRAL_CODE must be configured.",
+      },
+      slippage: {
+        type: "number",
+        description: "Optional slippage percentage between 0 and 100",
+      },
+      prependOperatingExpenses: {
+        type: "boolean",
+        description: "Whether DLN should prepend operating expenses",
+        default: true,
+      },
+      additionalTakerRewardBps: {
+        type: "number",
+        description: "Optional additional taker reward in basis points",
+      },
+      deBridgeApp: {
+        type: "string",
+        description: "Optional deBridge app identifier",
       },
     },
-    required: ["txHash"],
+    required: [
+      "srcChainId",
+      "srcChainTokenIn",
+      "srcChainTokenInAmount",
+      "dstChainId",
+      "dstChainTokenOut",
+      "dstChainTokenOutRecipient",
+      "senderAddress",
+    ],
   },
 };
 
-/**
- * Export all DeBridge MCP tools
- */
+const preflightSourceTxTool: Tool = {
+  name: "preflight_source_tx",
+  description:
+    "Run read-only eRPC/RPC checks for native balance, ERC-20 token balance, and ERC-20 allowance before a DLN source transaction is signed elsewhere.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      chainId: { type: "string", description: "Source EVM chain ID" },
+      ownerAddress: {
+        type: "string",
+        description: "Wallet that will submit the source transaction",
+      },
+      tokenAddress: {
+        type: "string",
+        description:
+          "Source ERC-20 token address, or 0x0000000000000000000000000000000000000000 for native",
+      },
+      tokenAmount: {
+        type: "string",
+        description: "Required source token amount in base units",
+      },
+      spenderAddress: {
+        type: "string",
+        description: "Approval spender, usually create_tx_with_referral.spenderAddress",
+      },
+      txValue: {
+        type: "string",
+        description: "Native value required by the unsigned DLN transaction",
+      },
+      rpcUrl: {
+        type: "string",
+        description:
+          "Optional source-chain eRPC/RPC URL. Defaults to DEBRIDGE_RPC_URL_<chainId> or EVM_RPC_URL_<chainId>.",
+      },
+    },
+    required: [
+      "chainId",
+      "ownerAddress",
+      "tokenAddress",
+      "tokenAmount",
+      "spenderAddress",
+      "txValue",
+    ],
+  },
+};
+
+const getOrdersByReferralCodeTool: Tool = {
+  name: "get_orders_by_referral_code",
+  description:
+    "Look up deBridge orders attributed to a referral code through the DLN stats API.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      referralCode: {
+        type: "string",
+        description:
+          "deBridge referral code. If omitted, DEBRIDGE_REFERRAL_CODE must be configured.",
+      },
+      giveChainIds: {
+        type: "array",
+        items: { type: "number" },
+        description: "Optional source chain ID filter",
+      },
+      orderStates: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional order states filter",
+      },
+      externalCallStates: {
+        type: "array",
+        items: { type: "string" },
+        description: "Optional external call states filter",
+      },
+      skip: { type: "number", description: "Pagination offset", default: 0 },
+      take: {
+        type: "number",
+        description: "Page size, max 100",
+        default: 20,
+      },
+      blockTimestampFrom: {
+        type: "number",
+        description: "Optional minimum source block timestamp",
+      },
+    },
+    required: [],
+  },
+};
+
 export const debridgeMcpTools: Tool[] = [
-  searchTokenTool,
-  getBridgeQuoteTool,
-  createBridgeOrderTool,
-  executeBridgeTransactionTool,
   getSupportedChainsTool,
-  checkTransactionStatusTool,
+  searchTokenTool,
+  createTxWithReferralTool,
+  preflightSourceTxTool,
+  getOrdersByReferralCodeTool,
 ];
 
-/**
- * Map tool names to their handler functions
- */
-export const toolToHandler: Record<string, Function> = {
-  search_token: searchTokenHandler,
-  get_bridge_quote: getBridgeQuoteHandler,
-  create_bridge_order: createBridgeOrderHandler,
-  execute_bridge_transaction: executeBridgeTransactionHandler,
+export const toolToHandler: Record<string, (args: unknown) => Promise<unknown>> = {
   get_supported_chains: getSupportedChainsHandler,
-  check_transaction_status: checkTransactionStatusHandler,
+  search_token: searchTokenHandler,
+  create_tx_with_referral: createTxWithReferralHandler,
+  preflight_source_tx: preflightSourceTxHandler,
+  get_orders_by_referral_code: getOrdersByReferralCodeHandler,
 };

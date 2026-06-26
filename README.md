@@ -1,149 +1,120 @@
-# DeBridge MCP Server
+# deBridge MCP
 
-A minimal Model Context Protocol (MCP) server for interacting with the DeBridge protocol, enabling cross-chain token bridging operations.
+A focused MCP server for creating referral-attributed deBridge DLN transaction
+payloads and validating source-wallet readiness before another wallet/signer
+submits the transaction.
 
-## Features
-
-- **Dynamic Chain List**: Automatically fetches supported chains from the DLN API
-- **Multi-Chain Support**: Handles both EVM and Solana transactions seamlessly
-- **Token Search**: Search for tokens on any supported blockchain
-- **Bridge Quotes**: Get quotes for cross-chain token transfers
-- **Order Creation**: Create bridge orders for transferring tokens between chains
-- **Transaction Execution**: Execute bridge transactions with proper wallet signing
-- **Transaction Verification**: Check the status of bridge transactions and associated orders
+This server does not manage private keys, derive wallets, sign transactions, or
+send transactions.
 
 ## Tools
 
-The DeBridge MCP server provides the following tools:
+1. `get_supported_chains`
+   - Reads the current DLN supported-chain list.
+2. `search_token`
+   - Searches DLN token metadata for a chain.
+3. `create_tx_with_referral`
+   - Calls DLN `create-tx` directly and always includes a referral code.
+   - Returns the unsigned transaction, order id, quote, spender address,
+     required source amount, and native tx value.
+4. `preflight_source_tx`
+   - Uses a provided eRPC/RPC endpoint to check source native balance, ERC-20
+     balance, and ERC-20 allowance.
+5. `get_orders_by_referral_code`
+   - Calls the DLN stats API with the same `referralCode` shape used by the
+     deBridge referral-code examples.
 
-1. `get_supported_chains`: Get a list of all supported chains with their details
-2. `search_token`: Search for tokens on a specific chain
-3. `get_bridge_quote`: Get a quote for bridging tokens between chains
-4. `create_bridge_order`: Create a bridge order for cross-chain token transfers
-5. `execute_bridge_transaction`: Execute a bridge transaction on any supported chain
-6. `check_transaction_status`: Verify the status of a bridge transaction and its orders
+## Configuration
 
-## Setup
-
-### Prerequisites
-
-- Node.js v18+
-- pnpm
-- A mnemonic phrase for transaction signing
-
-### Installation
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/yourusername/debridge-mcp.git
-   cd debridge-mcp
-   ```
-
-2. Install dependencies:
-   ```bash
-   pnpm install
-   ```
-
-3. Create a `.env` file in the root directory:
-   ```
-   SEED_PHRASE="your twelve word mnemonic phrase here"
-   ```
-
-### Building
-
-Build the TypeScript code:
 ```bash
-pnpm run build
-```
-
-### Running
-
-Start the MCP server:
-```bash
+pnpm install
+pnpm build
 pnpm start
 ```
 
-## Usage Examples
+Environment variables:
 
-### Get Supported Chains
+```bash
+# Optional if every create/lookup call passes referralCode explicitly.
+DEBRIDGE_REFERRAL_CODE=30830
 
-```json
-{
-  "name": "get_supported_chains",
-  "arguments": {}
-}
+# Optional; defaults to https://dln.debridge.finance/v1.0
+DLN_API_BASE_URL=https://dln.debridge.finance/v1.0
+
+# Optional; defaults to https://stats-api.dln.trade/api
+DLN_STATS_API_BASE_URL=https://stats-api.dln.trade/api
+
+# Optional eRPC/RPC defaults for preflight_source_tx.
+DEBRIDGE_RPC_URL_8453=https://your-erpc-base-mainnet-endpoint
+EVM_RPC_URL_1=https://your-erpc-ethereum-mainnet-endpoint
 ```
 
-### Search for Tokens
+`preflight_source_tx` also accepts `rpcUrl` per call. That is the preferred
+path when the caller has an agent-scoped eRPC endpoint and does not want to
+store it in the MCP process environment.
+
+## Base USDC to Ethereum OBOL
+
+Create an unsigned DLN transaction with referral attribution:
+
+Replace the placeholder addresses with the agent wallet that will submit the
+source transaction and receive the destination asset.
 
 ```json
 {
-  "name": "search_token",
+  "name": "create_tx_with_referral",
   "arguments": {
-    "chainId": "1",
-    "search": "USDC"
-  }
-}
-```
-
-### Get a Bridge Quote
-
-```json
-{
-  "name": "get_bridge_quote",
-  "arguments": {
-    "srcChainId": "1",
-    "srcChainTokenIn": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+    "srcChainId": "8453",
+    "srcChainTokenIn": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
     "srcChainTokenInAmount": "1000000",
-    "dstChainId": "56",
-    "dstChainTokenOut": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"
+    "dstChainId": "1",
+    "dstChainTokenOut": "0x0b010000b7624eb9b3dfbc279673c76e9d29d5f7",
+    "dstChainTokenOutRecipient": "<destination-wallet-address>",
+    "senderAddress": "<source-wallet-address>",
+    "referralCode": "30830"
   }
 }
 ```
 
-### Create a Bridge Order
+Then preflight the source wallet before handing the unsigned tx to the actual
+wallet/signer:
 
 ```json
 {
-  "name": "create_bridge_order",
+  "name": "preflight_source_tx",
   "arguments": {
-    "srcChainId": "1",
-    "srcChainTokenIn": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
-    "srcChainTokenInAmount": "1000000",
-    "dstChainId": "56",
-    "dstChainTokenOut": "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d",
-    "dstChainTokenOutRecipient": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e",
-    "senderAddress": "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
+    "chainId": "8453",
+    "ownerAddress": "<source-wallet-address>",
+    "tokenAddress": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    "tokenAmount": "1673317",
+    "spenderAddress": "0xeF4fB24aD0916217251F553c0596F8Edc630EB66",
+    "txValue": "1000000000000000",
+    "rpcUrl": "https://your-erpc-base-mainnet-endpoint"
   }
 }
 ```
 
-### Execute a Bridge Transaction
+The returned `ready` flag is true only when native balance, token balance, and
+token allowance cover the source transaction requirements.
+
+## Referral Tracking
 
 ```json
 {
-  "name": "execute_bridge_transaction",
+  "name": "get_orders_by_referral_code",
   "arguments": {
-    "txData": {
-      "to": "0x663F3ad617193148711d28f5334eE4Ed07016602",
-      "data": "0x095ea7b3000000000000000000000000663f3ad617193148711d28f5334ee4ed07016602000000000000000000000000000000000000000000000000000000000000000a",
-      "value": "0"
-    }
+    "referralCode": "30830",
+    "take": 20,
+    "blockTimestampFrom": 1758806388
   }
 }
 ```
 
-### Check Transaction Status
+## Development
 
-```json
-{
-  "name": "check_transaction_status",
-  "arguments": {
-    "txHash": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
-  }
-}
+```bash
+pnpm test
 ```
 
-## License
-
-MIT
+The test suite mocks network calls and verifies that referral codes are present
+in DLN create-tx URLs and stats API request bodies.

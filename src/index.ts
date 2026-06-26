@@ -12,9 +12,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { version } from "./version.js";
 import * as dotenv from "dotenv";
-import { createWalletClient, http, publicActions } from "viem";
-import { mnemonicToAccount } from "viem/accounts";
-import { mainnet } from "viem/chains";
 import { debridgeMcpTools, toolToHandler } from "./tools/index.js";
 
 /**
@@ -23,19 +20,6 @@ import { debridgeMcpTools, toolToHandler } from "./tools/index.js";
 async function main() {
   // Load environment variables
   dotenv.config();
-  const seedPhrase = process.env.SEED_PHRASE;
-
-  if (!seedPhrase) {
-    console.error("Please set SEED_PHRASE environment variable");
-    process.exit(1);
-  }
-
-  // Create wallet client for transaction signing
-  const walletClient = createWalletClient({
-    account: mnemonicToAccount(seedPhrase),
-    chain: mainnet,
-    transport: http(),
-  }).extend(publicActions);
 
   // Initialize MCP server
   const server = new Server(
@@ -69,7 +53,7 @@ async function main() {
       }
 
       console.error(`Calling tool: ${toolName}`);
-      const result = await handler(walletClient, request.params.arguments);
+      const result = await handler(request.params.arguments);
 
       return {
         content: [
