@@ -1,0 +1,4 @@
+interface:
+  display_name: "deBridge DLN Referral"
+  short_description: "Build referral-aware DLN tx payloads safely"
+  default_prompt: "Use $debridge-dln-referral to build and validate a referral-aware deBridge DLN transaction flow."
