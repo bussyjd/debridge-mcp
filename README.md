@@ -1,11 +1,38 @@
 # deBridge MCP
 
 A focused MCP server for creating referral-attributed deBridge DLN transaction
-payloads and validating source-wallet readiness before another wallet/signer
+payloads and validating source-wallet readiness before an external agent wallet
 submits the transaction.
 
 This server does not manage private keys, derive wallets, sign transactions, or
 send transactions.
+
+## Scope
+
+This MCP is a transaction builder and preflight checker. It is intentionally not
+a wallet runtime.
+
+It does:
+
+- resolve deBridge-supported chains and tokens
+- create unsigned DLN `create-tx` payloads with a required `referralCode`
+- check source-chain native balance, ERC-20 balance, and ERC-20 allowance over
+  a caller-provided eRPC/RPC endpoint
+- look up orders attributed to a referral code
+
+It does not:
+
+- read `SEED_PHRASE`
+- derive wallets from mnemonics
+- hold private keys
+- sign transactions
+- submit transactions
+- approve ERC-20 spend
+- include Solana signing dependencies
+
+The caller is responsible for taking the returned unsigned transaction and
+passing it to the real agent wallet or remote signer after `preflight_source_tx`
+returns `ready: true`.
 
 ## Tools
 
@@ -49,9 +76,23 @@ DEBRIDGE_RPC_URL_8453=https://your-erpc-base-mainnet-endpoint
 EVM_RPC_URL_1=https://your-erpc-ethereum-mainnet-endpoint
 ```
 
+There is no `SEED_PHRASE` configuration. If a deployment requires a signer, run
+that signer outside this MCP and feed it the unsigned tx returned by
+`create_tx_with_referral`.
+
 `preflight_source_tx` also accepts `rpcUrl` per call. That is the preferred
 path when the caller has an agent-scoped eRPC endpoint and does not want to
 store it in the MCP process environment.
+
+## Intended Flow
+
+1. Call `get_supported_chains` and `search_token` to resolve the route assets.
+2. Call `create_tx_with_referral` with the route, source wallet, destination
+   recipient, and referral code.
+3. Call `preflight_source_tx` with the returned `spenderAddress`,
+   `sourceTokenRequiredAmount`, and `txValue`.
+4. If preflight is ready, pass `unsignedTx` to the external wallet/signer.
+5. Use `get_orders_by_referral_code` to monitor referral-attributed activity.
 
 ## Base USDC to Ethereum OBOL
 
@@ -76,8 +117,8 @@ source transaction and receive the destination asset.
 }
 ```
 
-Then preflight the source wallet before handing the unsigned tx to the actual
-wallet/signer:
+Then preflight the source wallet before handing the unsigned tx to the external
+agent wallet:
 
 ```json
 {
@@ -96,6 +137,9 @@ wallet/signer:
 
 The returned `ready` flag is true only when native balance, token balance, and
 token allowance cover the source transaction requirements.
+
+If `hasTokenAllowance` is false, the caller must perform an ERC-20 approval
+outside this MCP before submitting the DLN transaction.
 
 ## Referral Tracking
 
